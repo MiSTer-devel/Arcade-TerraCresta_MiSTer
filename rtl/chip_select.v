@@ -81,6 +81,36 @@ endfunction
 
 
 always @ (*) begin
+    prog_rom_cs       = 1'b0;
+    m68k_ram_cs       = 1'b0;
+    bg_ram_cs         = 1'b0;
+    m68k_ram1_cs      = 1'b0;
+    fg_ram_cs         = 1'b0;
+
+    input_p1_cs       = 1'b0;
+    input_p2_cs       = 1'b0;
+    input_system_cs   = 1'b0;
+    input_dsw_cs      = 1'b0;
+
+    flip_cs           = 1'b0;
+    scroll_x_cs       = 1'b0;
+    scroll_y_cs       = 1'b0;
+
+    sound_latch_cs    = 1'b0;
+
+    prot_chip_data_cs = 1'b0;
+    prot_chip_cmd_cs  = 1'b0;
+
+    z80_rom_cs        = 1'b0;
+    z80_ram_cs        = 1'b0;
+
+    z80_sound0_cs     = 1'b0;
+    z80_sound1_cs     = 1'b0;
+    z80_dac1_cs       = 1'b0;
+    z80_dac2_cs       = 1'b0;
+    z80_latch_clr_cs  = 1'b0;
+    z80_latch_r_cs    = 1'b0;
+
     // Memory mapping based on PCB type
     case (pcb)
         pcb_terra_cresta: begin
@@ -106,7 +136,7 @@ always @ (*) begin
 
         end
 
-        pcb_amazon,pcb_amazont,pcb_amazont: begin
+        pcb_amazon,pcb_amazont: begin
             prog_rom_cs       = m68k_cs( 'h000000, 17 );
             m68k_ram_cs       = m68k_cs( 'h040000, 13 );
             bg_ram_cs         = m68k_cs( 'h042000, 12 );
