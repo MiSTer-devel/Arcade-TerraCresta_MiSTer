@@ -5,7 +5,7 @@ FPGA compatible core of Nichibutsu M68000 (Terra Cresta Based) arcade hardware f
 
 The goal for this implementation is gameplay to be 1:1 of the Nichibutsu (Terra Cresta based) 68000 hardware. This core was developed with assistance from [**atrac17**](https://github.com/atrac17).
 
-The **MD** version (RBF `Arcade-TerraCrestaMD_YYYYMMDD.rbf`, MRAs `... [MD].mra`, `<rbf>TerraCrestaMD</rbf>`) adds save states, high-score saving, per-controller start/coin, MAME 0.288 DIP switches, a current MiSTer framework and fully clock-enabled timing. It is based on the original core by va7deo ([va7deo/TerraCresta](https://github.com/va7deo/TerraCresta)).
+**This core adds "[MD]" to all of the MRA names so that they can live alongside the legacy version.**
 
 ![Nichibutsu TC](https://user-images.githubusercontent.com/32810066/172844714-a23fce6b-2eab-4c47-ae46-e0c48f447c84.png)
 
