@@ -63,7 +63,7 @@ Button combinations: none in normal play. Kid no Hore Hore Daisakusen **Debug Mo
 | dual_port_ram / math | Block RAM wrapper | Josh Bassett (nullobject), MIT | via va7deo/TerraCresta |
 | [**Save states**](https://github.com/MiSTer-devel/Arcade-TaitoF2_MiSTer) | `ddram`, `memory_stream`, `savestates`, `savestate_ui` and the 68000 save/restore technique | Martin Donlon (wickerwaka); savestate_ui from FPGAzumSpass's MiSTer cores | MiSTer-devel/Arcade-TaitoF2_MiSTer @ `9438df98f1ea826c5398db43587992def0124603` |
 | High-score saving | Flow modelled on MiSTer-devel/Arcade-RaizingMD_MiSTer and Arcade-IGSPGM_MiSTer; table data from MAME `hiscore.dat` | MAME hiscore.dat contributors | MAME 0.288 |
-| [**Template_MiSTer**](https://github.com/MiSTer-devel/Template_MiSTer) | MiSTer framework (`sys/`) | MiSTer-devel | `e901a9fa6548f4eb024619357b89d48be94fd9f8` |
+| [**Template_MiSTer**](https://github.com/MiSTer-devel/Template_MiSTer) | MiSTer framework (`sys/`) | MiSTer-devel | `d6324f239f43d3b357ddcd82326e10533e32af6e` |
 
 # PCB Check List
 
