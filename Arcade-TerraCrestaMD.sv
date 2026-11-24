@@ -682,7 +682,7 @@ chip_select cs (
     .pcb,
 
     .m68k_a,
-    .m68k_as_n,
+    .m68k_as_n(m68k_as_n | ss_load_hold),  // no 68000 selects while a state load holds the cpu
 
     .z80_addr,
     .MREQ_n,
@@ -1654,6 +1654,7 @@ wire ss_irq         = ss_state == SST_SAVE_IRQ;
 wire ss_ovr         = ss_state == SST_SAVE_SSP || ss_state == SST_SAVE_EXIT || ss_state == SST_LOAD_RESET || ss_state == SST_LOAD_EXIT;
 wire ss_restoring   = ss_state == SST_LOAD_RESET || ss_state == SST_LOAD_EXIT;
 wire ss_reset       = ss_state == SST_LOAD_RESET;
+wire ss_load_hold   = ss_state == SST_LOAD_READ || ss_state == SST_LOAD_OPL || ss_state == SST_LOAD_Z80 || ss_reset;
 wire ss_cpu_execute = ss_state == SST_SAVE_IRQ || ss_state == SST_SAVE_SSP || ss_state == SST_SAVE_EXIT || ss_restoring;
 
 // 68000 address decode while the core serves the save-state code
@@ -1668,9 +1669,9 @@ wire ss_wr_ssp_hi   = !m68k_as_n && !m68k_rw && !m68k_uds_n && !m68k_lds_n && m6
 wire ss_wr_ssp_lo   = !m68k_as_n && !m68k_rw && !m68k_uds_n && !m68k_lds_n && m68k_a[23:1] == 23'h7f8001;
 wire ss_prog_fetch  = !m68k_as_n && m68k_rw && m68k_fc[1:0] == 2'b10 && !ss_in_handler && !(ss_restoring && ss_in_reset);
 
-// 68000 and sound side run unless paused or held by a save-state sequence
+// 68000 runs unless paused or held by a save state; the sound side stops only for save states
 wire m68k_run     = ss_idle ? ~pause_cpu : ss_cpu_execute;
-wire z80_run      = ss_idle ? ~pause_cpu : (ss_state == SST_SAVE_Z80 && !z80_at_m1);
+wire z80_run      = ss_idle | (ss_state == SST_SAVE_Z80 && !z80_at_m1);
 wire snd_run      = z80_run;
 wire z80_int_mask = ~ss_idle;
 
