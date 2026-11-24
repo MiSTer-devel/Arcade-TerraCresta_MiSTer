@@ -1036,6 +1036,7 @@ reg  z80_irq_n;
 wire IORQ_n;
 wire MREQ_n;
 wire M1_n;
+wire z80_halt_n;
 
 //IORQ gets together with M1-pin active/low. 
 always @ (posedge clk_sys) begin
@@ -1077,7 +1078,7 @@ T80pa u_cpu(
     .IORQ_n     ( IORQ_n ),
     .M1_n       ( M1_n ),
     .BUSAK_n    (),
-    .HALT_n     ( 1'b1 ),
+    .HALT_n     ( z80_halt_n ),
     .MREQ_n     ( MREQ_n ),
     .REG        ( z80_reg )
 );
@@ -1642,7 +1643,9 @@ wire [31:0] ss_restore_ssp;
 reg  [15:0] ss_reset_vector[4];
 reg   [5:0] ss_reset_count;
 reg  [23:0] ss_timeout;
-reg         z80_at_m1;
+wire        z80_park_run;
+wire        z80_parked;
+wire [211:0] z80_reg_ss;
 reg         z80_ss_reset;
 reg         z80_dirset;
 reg         opl_rp_start;
@@ -1671,14 +1674,27 @@ wire ss_prog_fetch  = !m68k_as_n && m68k_rw && m68k_fc[1:0] == 2'b10 && !ss_in_h
 
 // 68000 runs unless paused or held by a save state; the sound side stops only for save states
 wire m68k_run     = ss_idle ? ~pause_cpu : ss_cpu_execute;
-wire z80_run      = ss_idle | (ss_state == SST_SAVE_Z80 && !z80_at_m1);
+wire z80_run      = ss_idle | (ss_state == SST_SAVE_Z80 && z80_park_run);
 wire snd_run      = z80_run;
 wire z80_int_mask = ~ss_idle;
 
-always @(posedge clk_sys) begin
-    reg m1_d;
+z80_ss_park z80_park
+(
+    .clk(clk_sys),
+    .reset(reset | z80_ss_reset),
+    .ce(ce_8m),
+    .park(ss_state == SST_SAVE_Z80),
+    .M1_n(M1_n),
+    .MREQ_n(MREQ_n),
+    .HALT_n(z80_halt_n),
+    .din(z80_din),
+    .reg_in(z80_reg),
+    .run(z80_park_run),
+    .parked(z80_parked),
+    .reg_ss(z80_reg_ss)
+);
 
-    m1_d         <= M1_n;
+always @(posedge clk_sys) begin
     ss_write     <= 0;
     ss_read      <= 0;
     z80_dirset   <= 0;
@@ -1691,7 +1707,6 @@ always @(posedge clk_sys) begin
         SST_IDLE: begin
             ss_timeout   <= 0;
             ss_busy_seen <= 0;
-            z80_at_m1    <= 0;
             z80_ss_reset <= 0;
             if (!reset && ss_save) ss_state <= SST_SAVE_Z80;
             if (!reset && ss_load) begin
@@ -1701,10 +1716,9 @@ always @(posedge clk_sys) begin
             end
         end
 
-        // sound cpu runs to the start of its next instruction fetch
+        // sound cpu runs to a complete instruction boundary
         SST_SAVE_Z80: begin
-            if (m1_d && !M1_n) z80_at_m1 <= 1;
-            if (z80_at_m1) begin
+            if (z80_parked) begin
                 ss_timeout <= 0;
                 ss_state   <= SST_SAVE_IRQ;
             end else if (&ss_timeout) ss_state <= SST_IDLE;
@@ -1758,6 +1772,14 @@ always @(posedge clk_sys) begin
 
         default: ss_state <= SST_IDLE;
     endcase
+
+    // a game reset ends any save or load in progress
+    if (reset) begin
+        ss_state     <= SST_IDLE;
+        ss_write     <= 0;
+        z80_dirset   <= 0;
+        opl_rp_start <= 0;
+    end
 end
 
 // OPL register shadow (z80 writes) and replay after a restore
@@ -1794,6 +1816,8 @@ always @(posedge clk_sys) begin
 
     if (sound_wr & ~sound_addr & snd_run) opl_sel <= sound_data;
     if (ss_misc_wr) opl_sel <= ss_misc_out[9:2];
+    // the chip's register select clears on a game reset
+    if (reset) opl_sel <= 8'h00;
 
     opl_rp_wr <= 0;
     if (opl_rp_start) begin
@@ -1838,6 +1862,9 @@ always @(posedge clk_sys) begin
             default: opl_rp_run <= 0;
         endcase
     end
+
+    // a game reset stops the replay
+    if (reset) opl_rp_run <= 0;
 end
 
 // save-state chunks
@@ -1904,7 +1931,7 @@ ss_ram_port #(.AW(12), .DW(8), .SS_IDX(SSIDX_Z80_RAM)) ss_z80
 auto_save_adaptor #(.N_BITS(212), .SS_IDX(SSIDX_Z80_REG)) ss_z80reg
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_Z80_REG]),
-    .bits_in(z80_reg), .bits_out(z80_dir), .bits_wr()
+    .bits_in(z80_reg_ss), .bits_out(z80_dir), .bits_wr()
 );
 
 ss_ram_port #(.AW(8), .DW(8), .SS_IDX(SSIDX_OPL)) ss_opl

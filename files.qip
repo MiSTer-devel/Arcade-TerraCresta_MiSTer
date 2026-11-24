@@ -27,5 +27,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/savestate/ss_adaptors.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/hiscore.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/video_timing.sv
 set_global_assignment -name VERILOG_FILE rtl/chip_select.v
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/z80_ss_park.sv
 set_global_assignment -name SDC_FILE Arcade-TerraCrestaMD.sdc
 set_global_assignment -name SYSTEMVERILOG_FILE Arcade-TerraCrestaMD.sv
