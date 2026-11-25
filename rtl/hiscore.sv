@@ -45,8 +45,9 @@ reg  [5:0] ent_bytes;
 wire [2:0] n_ent = ent_bytes[5:3];
 assign has_entries = n_ent != 0;
 
-// saved table buffer
-(* ramstyle = "MLAB" *) reg  [7:0] nvbuf[256];
+// saved table buffer: two banks, cur holds the last complete table and a capture fills the other
+(* ramstyle = "MLAB" *) reg  [7:0] nvbuf[512];
+reg        cur = 0;
 reg  [7:0] buf_addr;
 reg  [7:0] buf_q;
 reg  [7:0] buf_wdata;
@@ -57,14 +58,16 @@ wire dl_nv    = ioctl_download & (ioctl_index == 16'd4);
 wire up_nv    = ioctl_upload   & (ioctl_index == 16'd4);
 wire dl_rom   = ioctl_download & (ioctl_index == 16'd0);
 
-// buffer port: host download/upload, otherwise the copy engine
-wire [7:0] b_addr = (dl_nv | up_nv) ? ioctl_addr[7:0] : buf_addr;
-wire [7:0] b_data = dl_nv ? ioctl_dout : buf_wdata;
-wire       b_we   = dl_nv ? (ioctl_wr & ~|ioctl_addr[26:8]) : buf_we;
+// write port: host download into the current bank, otherwise a capture into the other one
+wire [8:0] w_addr = dl_nv ? {cur, ioctl_addr[7:0]} : {~cur, buf_addr};
+wire [7:0] w_data = dl_nv ? ioctl_dout : buf_wdata;
+wire       w_we   = dl_nv ? (ioctl_wr & ~|ioctl_addr[26:8]) : buf_we;
+// read port: host upload or restore, both from the current bank
+wire [8:0] r_addr = {cur, up_nv ? ioctl_addr[7:0] : buf_addr};
 
 always @(posedge clk) begin
-    if (b_we) nvbuf[b_addr] <= b_data;
-    buf_q <= nvbuf[b_addr];
+    if (w_we) nvbuf[w_addr] <= w_data;
+    buf_q <= nvbuf[r_addr];
 end
 
 assign ioctl_din = buf_q;
@@ -103,6 +106,7 @@ reg  [7:0] pos;
 reg        ok;
 reg        pass1;
 reg        old_frame, old_osd, old_save;
+reg        have_save = 0;   // a table was captured this session (kept through game resets, cleared by a ROM load)
 
 wire frame_rise = frame & ~old_frame;
 
@@ -113,6 +117,7 @@ always @(posedge clk) begin
     upload_req <= 0;
     ram_we     <= 0;
     buf_we     <= 0;
+    if (dl_rom) have_save <= 0;
 
     if (reset | dl_rom) begin
         state   <= ST_WAIT;
@@ -158,7 +163,7 @@ always @(posedge clk) begin
                             ei    <= 0;
                             off   <= 0;
                             pos   <= 0;
-                            state <= have_nv ? ST_RESTORE : ST_READY;
+                            state <= (have_nv | have_save) ? ST_RESTORE : ST_READY;
                         end else begin
                             pass1 <= ok && ram_q == e_end;
                             state <= ST_FRAME;
@@ -234,8 +239,11 @@ always @(posedge clk) begin
                 endcase
             end
 
-            ST_REQ: begin
+            // the captured bank becomes current once no upload is reading the old one
+            ST_REQ: if (!up_nv) begin
+                cur        <= ~cur;
                 upload_req <= 1;
+                have_save  <= 1;
                 state      <= ST_READY;
             end
 

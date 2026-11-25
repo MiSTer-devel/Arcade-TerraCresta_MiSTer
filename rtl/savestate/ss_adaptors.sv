@@ -10,13 +10,14 @@ module ss_ram_port #(parameter AW = 12, DW = 16, SS_IDX = 0)
     output     [AW-1:0] addr,
     output     [DW-1:0] wdata,
     output              we,
-    input      [DW-1:0] q
+    input      [DW-1:0] q,
+    input               wen     // 0: stream writes are acknowledged but not applied
 );
 
 assign sel   = ssbus.access(SS_IDX);
 assign addr  = ssbus.addr[AW-1:0];
 assign wdata = ssbus.data[DW-1:0];
-assign we    = sel & ssbus.write;
+assign we    = sel & ssbus.write & wen;
 
 reg rd_dly;
 always @(posedge clk) begin

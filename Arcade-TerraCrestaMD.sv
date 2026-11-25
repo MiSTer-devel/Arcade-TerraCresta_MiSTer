@@ -65,8 +65,8 @@ wire [3:0] vs_offset = status[31:28];
 
 wire test_flip_x = status[32];
 wire test_flip_y = status[33];
-wire fg_enable   = ~(status[36] | key_fg_enable);
-wire bg_enable   = ~(status[37] | key_bg_enable);
+wire fg_enable   = ~(status[37] | key_fg_enable);   // OSD "Foreground Layer" (o5)
+wire bg_enable   = ~(status[36] | key_bg_enable);   // OSD "Background Layer" (o4)
 wire spr_enable  = ~(status[38] | key_spr_enable);
 
 assign VIDEO_ARX = (!aspect_ratio) ? (orientation  ? 8'd4 : 8'd3) : (aspect_ratio - 1'd1);
@@ -92,7 +92,7 @@ localparam CONF_STR = {
     "P1O89,Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
     "P1OA,Orientation,Vert,Horz;",
     "P1-;",
-    "P1O46,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%,CRT 100%;",
+    "P1O46,Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
     "P1OB,Force Scandoubler,Off,On;",
     "P1-;",
     "P1OOR,H-sync Adjust,0,1,2,3,4,5,6,7,-8,-7,-6,-5,-4,-3,-2,-1;",
@@ -156,6 +156,7 @@ wire        ss_status_set;
 wire  [1:0] ss_slot;
 wire        ss_info_req;
 wire  [7:0] ss_info;
+wire  [7:0] ss_info_out;
 wire [127:0] status_in = {status[127:67], ss_slot, status[64:0]};
 
 hps_io #(.CONF_STR(CONF_STR)) hps_io
@@ -170,7 +171,7 @@ hps_io #(.CONF_STR(CONF_STR)) hps_io
     .status_set(ss_status_set),
     .status_menumask({13'd0, hs_has_entries, pcb_amazon, direct_video}),
     .info_req(ss_info_req),
-    .info(ss_info),
+    .info(ss_info_out),
     .forced_scandoubler(hps_forced_scandoubler),
     .gamma_bus(gamma_bus),
     .direct_video(direct_video),
@@ -381,13 +382,14 @@ pause #(8,8,8,72) pause
     .pause_cpu(pause_cpu),
     .dim_video(dim_video),
     .OSD_STATUS(OSD_STATUS),
-    .r(rgb[23:16]),
-    .g(rgb[15:8]),
-    .b(rgb[7:0]),
+    .r(rgb_px[23:16]),
+    .g(rgb_px[15:8]),
+    .b(rgb_px[7:0]),
     .rgb_out(rgb_pause_out)
 );
 
 wire [23:0] rgb_pause_out;
+wire [23:0] rgb_px;
 wire dim_video;
 
 reg  cocktail_flip;
@@ -560,12 +562,18 @@ wire [10:0] bg_ram_addr = bg_tile;
 wire [10:0] fg_ram_addr = { 1'b0, fg_tile };
 
 reg [7:0] pal_idx;
+reg       pix_blank;    // no enabled layer supplies this pixel
+reg       rgb_blank;    // pix_blank for the pixel in rgb
 
 always @ (posedge clk_sys) begin
     if (clk_6M) begin
         rgb <= { prom_r[pal_idx], 4'b0, prom_g[pal_idx], 4'b0, prom_b[pal_idx], 4'b0 };
+        rgb_blank <= pix_blank;
     end
 end
+
+// black applied after the palette read, so the palette PROMs stay in RAM
+assign rgb_px = rgb_blank ? 24'd0 : rgb;
 
 reg [7:0] gfxc ;
 
@@ -583,6 +591,10 @@ reg [8:0] hc_r;
 reg [8:0] hc_s_r;
 reg [1:0] gfx2_pal_h;
 reg [1:0] gfx2_pal_l;
+
+// layers that supply the current pixel at the priority stage
+wire fg_vis  = gfx1_pix < 4'hf && fg_enable && scroll_x[12] == 0;
+wire spr_vis = spr_enable && !spr_transp_r;
 
 always @ (posedge clk_sys) begin
     if (clk_6M == 1) begin
@@ -606,7 +618,10 @@ always @ (posedge clk_sys) begin
 
         spr_transp_r <= spr_transp;
     // 2
-        pal_idx <= ( gfx1_pix < 4'hf && fg_enable && scroll_x[12] == 0 ) ? { 4'b0, gfx1_pix } : ( spr_enable == 0 || ( bg_enable == 1 && spr_transp_r && scroll_x[13] == 0 )) ? gfx2_pix :  spi_r;
+        // with the background switched off in the OSD, a pixel no other enabled layer covers is black
+        pal_idx <= fg_vis ? { 4'b0, gfx1_pix } : spr_vis ? spi_r : !bg_enable ? 8'd0 :
+                   ( spr_enable == 0 || scroll_x[13] == 0 ) ? gfx2_pix : spi_r;
+        pix_blank <= !fg_vis && !spr_vis && !bg_enable;
     end
 end
 
@@ -782,7 +797,7 @@ always @ (posedge clk_sys ) begin
             m68k_ipl2_n <= 1 ;
         end
 
-        if ( ss_misc_wr ) m68k_ipl2_n <= ss_misc_out[MISC_IPL];
+        if ( ss_misc_ld ) m68k_ipl2_n <= ss_misc_out[MISC_IPL];
         
     end
 
@@ -1058,7 +1073,7 @@ always @ (posedge clk_sys) begin
         z80_irq_n <= 1;
     end
 
-    if ( ss_misc_wr ) z80_irq_n <= ss_misc_out[MISC_ZIRQ];
+    if ( ss_misc_ld ) z80_irq_n <= ss_misc_out[MISC_ZIRQ];
 end
 
 T80pa u_cpu(
@@ -1123,9 +1138,10 @@ jtopl #(.OPL_TYPE(1)) opl
     .sample(opl_sample_clk)
 );
 
-// mix at 18 bits, then limit to the 16-bit output range
-wire signed [17:0] audio_mix = sample + ($signed({ ~dac1[7], dac1[6:0], 8'b0 }) >>> 1) + ($signed({ ~dac2[7], dac2[6:0], 8'b0 }) >>> 1);
-wire signed [15:0] audio_out = audio_mix > 18'sd32767 ? 16'sd32767 : audio_mix < -18'sd32768 ? -16'sd32768 : audio_mix[15:0];
+// FM + DAC1 x 80/256 + DAC2 x 176/256 (the board's mixing resistors make DAC2 2.2 x DAC1), summed at 18 bits
+wire signed [17:0] audio_mix = sample + $signed({ ~dac1[7], dac1[6:0] }) * 18'sd80 + $signed({ ~dac2[7], dac2[6:0] }) * 18'sd176;
+// limited to the 16-bit output range
+wire signed [15:0] audio_out = audio_mix > 18'sd32767 ? 16'sh7fff : audio_mix < -18'sd32768 ? 16'sh8000 : audio_mix[15:0];
 
 always @ * begin
     // mix audio
@@ -1251,7 +1267,7 @@ always @ (posedge clk_sys) begin
         prot_state <= 0;
     end
 
-   if ( ss_misc_wr ) begin
+   if ( ss_misc_ld ) begin
         { scroll_x, scroll_y, cocktail_flip, sound_latch, dac1, dac2, prot_cmd, nb1412m2_addr, nb1412m2_rom_dout, nb1412m2_adj_dout } <= ss_misc_out[MISC_USED-1:MISC_BOARD];
    end
 
@@ -1642,7 +1658,9 @@ typedef enum logic [3:0] {
     SST_LOAD_RESET,
     SST_LOAD_EXIT,
     SST_LOAD_PARK,
-    SST_LOAD_ABORT
+    SST_LOAD_ABORT,
+    SST_SAVE_MARK,
+    SST_LOAD_CHECK
 } sst_t;
 sst_t ss_state = SST_IDLE;
 
@@ -1652,6 +1670,9 @@ wire        ss_busy;
 reg         ss_busy_seen;
 reg  [31:0] ss_saved_ssp;
 wire [31:0] ss_restore_ssp;
+// restored SSP even and inside main or extra work RAM, with room for the 70 bytes the restore code pops
+wire [23:0] ss_ssp_off = ss_restore_ssp[23:0] - (pcb == 3'd0 ? 24'h020000 : 24'h040000);
+wire        ss_ssp_ok  = !ss_ssp_off[0] && (ss_ssp_off <= 24'h1fba || (ss_ssp_off >= 24'h3000 && ss_ssp_off <= 24'h3fba));
 reg  [15:0] ss_reset_vector[4];
 reg   [5:0] ss_reset_count;
 reg  [23:0] ss_timeout;
@@ -1666,7 +1687,11 @@ reg   [1:0] ss_slot_q;      // selected slot one clock earlier
 reg   [1:0] ss_op_slot;     // slot of the save or load in progress
 reg   [3:0] ss_slot_cut = 0; // slots whose last save was cut off
 wire        ss_kbd;         // request came from the keyboard
-wire        ss_load_ok;     // every chunk arrived in the load
+wire        ss_load_ok;     // the slot read in full: every chunk at its length, then the end marker
+reg         ss_dry;         // check pass of a load: chunks are read but not written into the game
+reg   [1:0] ss_info_slot;   // slot of the last save request, for its OSD message
+reg         ss_hdr_acq, ss_hdr_we;  // slot size word cleared before a save rewrites the slot
+wire        ss_hdr_busy;
 
 wire ss_idle        = ss_state == SST_IDLE;
 wire ss_busy_any    = ~ss_idle;
@@ -1719,6 +1744,7 @@ always @(posedge clk_sys) begin
     opl_rp_start <= 0;
     ss_timeout   <= ss_timeout + 1'd1;
     ss_slot_q    <= ss_slot;
+    if (ss_save) ss_info_slot <= ss_kbd ? ss_slot : ss_slot_q;
 
     if (ss_busy) ss_busy_seen <= 1;
 
@@ -1727,6 +1753,9 @@ always @(posedge clk_sys) begin
             ss_timeout   <= 0;
             ss_busy_seen <= 0;
             z80_ss_reset <= 0;
+            ss_dry       <= 0;
+            ss_hdr_acq   <= 0;
+            ss_hdr_we    <= 0;
             // a pad or OSD save uses the slot from before its auto-increment
             if (!reset && ss_save) begin
                 ss_op_slot <= ss_kbd ? ss_slot : ss_slot_q;
@@ -1757,8 +1786,21 @@ always @(posedge clk_sys) begin
             if (ss_wr_ssp_lo) begin
                 ss_saved_ssp[15:0] <= m68k_dout;
                 ss_slot_cut[ss_op_slot] <= 1;
-                ss_write <= 1;
-                ss_state <= SST_SAVE_WRITE;
+                ss_hdr_acq <= 1;
+                ss_state   <= SST_SAVE_MARK;
+            end
+        end
+
+        // the slot's size word goes to 0 (counter kept) so Main never writes a half-rewritten slot to disk
+        SST_SAVE_MARK: begin
+            if (!ss_hdr_busy) begin
+                if (!ss_hdr_we) ss_hdr_we <= 1;
+                else begin
+                    ss_hdr_we  <= 0;
+                    ss_hdr_acq <= 0;
+                    ss_write   <= 1;
+                    ss_state   <= SST_SAVE_WRITE;
+                end
             end
         end
 
@@ -1769,22 +1811,30 @@ always @(posedge clk_sys) begin
 
         SST_SAVE_EXIT: if (ss_prog_fetch) ss_state <= SST_IDLE;
 
-        // sound cpu parks at an instruction boundary before the slot is read
+        // sound cpu parks at an instruction boundary, then the slot is read once without writing the game
         SST_LOAD_PARK: begin
             if (z80_parked) begin
                 ss_read  <= 1;
-                ss_state <= SST_LOAD_READ;
+                ss_dry   <= 1;
+                ss_state <= SST_LOAD_CHECK;
             end else if (&ss_timeout) ss_state <= SST_IDLE;
         end
 
-        // a complete state resets the sound cpu; an empty or partial one resumes both cpus
-        SST_LOAD_READ: if (ss_busy_seen && !ss_busy && !ss_read) begin
+        // a complete slot is read again into the game; an empty, short or damaged one resumes both cpus
+        SST_LOAD_CHECK: if (ss_busy_seen && !ss_busy && !ss_read) begin
+            ss_dry         <= 0;
+            ss_busy_seen   <= 0;
             ss_reset_count <= 0;
-            if (ss_load_ok) begin
-                z80_ss_reset <= 1;
-                opl_rp_start <= 1;
-                ss_state     <= SST_LOAD_OPL;
+            if (ss_load_ok && ss_ssp_ok) begin
+                ss_read  <= 1;
+                ss_state <= SST_LOAD_READ;
             end else ss_state <= SST_LOAD_ABORT;
+        end
+
+        SST_LOAD_READ: if (ss_busy_seen && !ss_busy && !ss_read) begin
+            z80_ss_reset <= 1;
+            opl_rp_start <= 1;
+            ss_state     <= SST_LOAD_OPL;
         end
 
         SST_LOAD_OPL: if (!opl_rp_start && !opl_rp_busy) begin
@@ -1826,6 +1876,9 @@ always @(posedge clk_sys) begin
         ss_read      <= 0;
         z80_dirset   <= 0;
         opl_rp_start <= 0;
+        ss_dry       <= 0;
+        ss_hdr_acq   <= 0;
+        ss_hdr_we    <= 0;
     end
 end
 
@@ -1840,16 +1893,14 @@ reg  [7:0] opl_rp_idx;
 reg  [2:0] opl_rp_step;
 reg [11:0] opl_rp_wait;
 reg        opl_rp_run;
-reg        opl_rp_fb;       // the replay is the post-reset feedback clear, which does not use the shadow
 reg        opl_rp_wr, opl_rp_addr;
 reg  [7:0] opl_rp_data;
 assign     opl_rp_busy = opl_rp_run;
-wire       opl_rp_sh   = opl_rp_run & ~opl_rp_fb;
 
 wire       sh_z80_wr = sound_wr & sound_addr & snd_run;
-wire [7:0] sh_addr   = ss_opl_sel ? ss_opl_addr : opl_rp_sh ? opl_rp_idx : ~opl_clr[8] ? opl_clr[7:0] : opl_sel;
+wire [7:0] sh_addr   = ss_opl_sel ? ss_opl_addr : opl_rp_run ? opl_rp_idx : ~opl_clr[8] ? opl_clr[7:0] : opl_sel;
 wire [7:0] sh_wdata  = ss_opl_sel ? ss_opl_wdata : ~opl_clr[8] ? 8'd0 : sound_data;
-wire       sh_we     = ss_opl_sel ? ss_opl_we : opl_rp_sh ? 1'b0 : ~opl_clr[8] ? 1'b1 : sh_z80_wr;
+wire       sh_we     = ss_opl_sel ? ss_opl_we : opl_rp_run ? 1'b0 : ~opl_clr[8] ? 1'b1 : sh_z80_wr;
 
 always @(posedge clk_sys) begin
     if (sh_we) opl_shadow[sh_addr] <= sh_wdata;
@@ -1864,21 +1915,14 @@ always @(posedge clk_sys) begin
     else if (~opl_clr[8]) opl_clr <= opl_clr + 1'd1;
 
     if (sound_wr & ~sound_addr & snd_run) opl_sel <= sound_data;
-    if (ss_misc_wr) opl_sel <= ss_misc_out[MISC_OPL +: 8];
+    if (ss_misc_ld) opl_sel <= ss_misc_out[MISC_OPL +: 8];
     // the chip's register select clears on a game reset
     if (reset) opl_sel <= 8'h00;
 
     opl_rp_wr <= 0;
     if (opl_rp_start) begin
         opl_rp_run  <= 1;
-        opl_rp_fb   <= 0;
         opl_rp_idx  <= 0;
-        opl_rp_step <= 0;
-    end else if (old_reset & ~reset) begin
-        // jtopl keeps channel feedback (C0-C8) through its reset: write 0 there when the game reset ends
-        opl_rp_run  <= 1;
-        opl_rp_fb   <= 1;
-        opl_rp_idx  <= 8'hc0;
         opl_rp_step <= 0;
     end else if (opl_rp_run) begin
         case (opl_rp_step)
@@ -1897,17 +1941,16 @@ always @(posedge clk_sys) begin
                 if (opl_rp_wait == 12'd16) begin
                     opl_rp_wr   <= 1;
                     opl_rp_addr <= 1;
-                    opl_rp_data <= opl_rp_fb ? 8'h00 : opl_sh_q;
+                    opl_rp_data <= opl_sh_q;
                     opl_rp_wait <= 0;
                     opl_rp_step <= 3;
                 end
             end
-            // jtopl applies a channel write at its next operator enable (every 96 clocks), so the clear waits 192
             3: begin
                 opl_rp_wait <= opl_rp_wait + 1'd1;
-                if (opl_rp_wait == (opl_rp_fb ? 12'd192 : 12'd2400)) begin
+                if (opl_rp_wait == 12'd2400) begin
                     opl_rp_idx  <= opl_rp_idx + 1'd1;
-                    opl_rp_step <= (opl_rp_idx == (opl_rp_fb ? 8'hc8 : 8'hff)) ? 3'd4 : 3'd0;
+                    opl_rp_step <= (opl_rp_idx == 8'hff) ? 3'd4 : 3'd0;
                 end
             end
             4: begin
@@ -1937,6 +1980,7 @@ wire  [7:0] ss_z80_wdata;
 wire [211:0] z80_reg, z80_dir;
 wire [MISC_BITS-1:0] ss_misc_out;
 wire        ss_misc_wr;
+wire        ss_misc_ld = ss_misc_wr & ~ss_dry;   // registers take the chunk only on the load pass
 wire [MISC_BITS-1:0] ss_misc_in = { {(MISC_BITS-MISC_USED){1'b0}}, scroll_x, scroll_y, cocktail_flip, sound_latch, dac1, dac2, prot_cmd, nb1412m2_addr, nb1412m2_rom_dout, nb1412m2_adj_dout, opl_sel, z80_irq_n, m68k_ipl2_n };
 
 ssbus_if ssbus();
@@ -1958,31 +2002,31 @@ ss_reg32 #(.SS_IDX(SSIDX_GLOBAL)) ss_ssp
 ss_ram_port #(.AW(12), .DW(16), .SS_IDX(SSIDX_MAIN_RAM)) ss_main
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_MAIN_RAM]),
-    .sel(ss_main_sel), .addr(ss_main_addr), .wdata(ss_main_wdata), .we(ss_main_we), .q(ram68k_dout)
+    .sel(ss_main_sel), .addr(ss_main_addr), .wdata(ss_main_wdata), .we(ss_main_we), .q(ram68k_dout), .wen(~ss_dry)
 );
 
 ss_ram_port #(.AW(11), .DW(16), .SS_IDX(SSIDX_FG_RAM)) ss_fg
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_FG_RAM]),
-    .sel(ss_fg_sel), .addr(ss_fg_addr), .wdata(ss_fg_wdata), .we(ss_fg_we), .q({8'h00, fg_ram_q[7:0]})
+    .sel(ss_fg_sel), .addr(ss_fg_addr), .wdata(ss_fg_wdata), .we(ss_fg_we), .q({8'h00, fg_ram_q[7:0]}), .wen(~ss_dry)
 );
 
 ss_ram_port #(.AW(11), .DW(16), .SS_IDX(SSIDX_BG_RAM)) ss_bg
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_BG_RAM]),
-    .sel(ss_bg_sel), .addr(ss_bg_addr), .wdata(ss_bg_wdata), .we(ss_bg_we), .q(bg_ram_q)
+    .sel(ss_bg_sel), .addr(ss_bg_addr), .wdata(ss_bg_wdata), .we(ss_bg_we), .q(bg_ram_q), .wen(~ss_dry)
 );
 
 ss_ram_port #(.AW(11), .DW(16), .SS_IDX(SSIDX_RAM1)) ss_ram1
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_RAM1]),
-    .sel(ss_ram1_sel), .addr(ss_ram1_addr), .wdata(ss_ram1_wdata), .we(ss_ram1_we), .q(m68k_ram1_dout)
+    .sel(ss_ram1_sel), .addr(ss_ram1_addr), .wdata(ss_ram1_wdata), .we(ss_ram1_we), .q(m68k_ram1_dout), .wen(~ss_dry)
 );
 
 ss_ram_port #(.AW(12), .DW(8), .SS_IDX(SSIDX_Z80_RAM)) ss_z80
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_Z80_RAM]),
-    .sel(ss_z80_sel), .addr(ss_z80_addr), .wdata(ss_z80_wdata), .we(ss_z80_we), .q(z80_ram_dout)
+    .sel(ss_z80_sel), .addr(ss_z80_addr), .wdata(ss_z80_wdata), .we(ss_z80_we), .q(z80_ram_dout), .wen(~ss_dry)
 );
 
 auto_save_adaptor #(.N_BITS(212), .SS_IDX(SSIDX_Z80_REG)) ss_z80reg
@@ -1994,7 +2038,7 @@ auto_save_adaptor #(.N_BITS(212), .SS_IDX(SSIDX_Z80_REG)) ss_z80reg
 ss_ram_port #(.AW(8), .DW(8), .SS_IDX(SSIDX_OPL)) ss_opl
 (
     .clk(clk_sys), .ssbus(ssb[SSIDX_OPL]),
-    .sel(ss_opl_sel), .addr(ss_opl_addr), .wdata(ss_opl_wdata), .we(ss_opl_we), .q(opl_sh_q)
+    .sel(ss_opl_sel), .addr(ss_opl_addr), .wdata(ss_opl_wdata), .we(ss_opl_we), .q(opl_sh_q), .wen(~ss_dry)
 );
 
 auto_save_adaptor #(.N_BITS(MISC_BITS), .SS_IDX(SSIDX_MISC)) ss_misc
@@ -2002,14 +2046,6 @@ auto_save_adaptor #(.N_BITS(MISC_BITS), .SS_IDX(SSIDX_MISC)) ss_misc
     .clk(clk_sys), .ssbus(ssb[SSIDX_MISC]),
     .bits_in(ss_misc_in), .bits_out(ss_misc_out), .bits_wr(ss_misc_wr)
 );
-
-// chunks written by the load in progress
-reg [SSIDX_COUNT-1:0] ss_got;
-always @(posedge clk_sys) begin
-    if (ss_state == SST_LOAD_PARK) ss_got <= 0;
-    else if (ssbus.write && !ssbus.query && ssbus.select < SSIDX_COUNT) ss_got[ssbus.select] <= 1;
-end
-assign ss_load_ok = &ss_got;
 
 // keyboard: only F1 and Alt events reach the save-state UI, one toggle each (F2/F3 are core keys)
 reg [10:0] ss_ps2_key = 0;
@@ -2025,6 +2061,10 @@ always @(posedge clk_sys) begin
     ss_kbd_q <= ss_kbd_evt;
 end
 assign ss_kbd = ss_kbd_q;
+
+// a save's OSD message names the slot the save used (the UI names the slot after its auto-increment)
+wire ss_info_save = !ss_info[0] && ss_info >= 8'd6 && ss_info <= 8'd12;
+assign ss_info_out = ss_info_save ? 8'd6 + {5'd0, ss_info_slot, 1'b0} : ss_info;
 
 savestate_ui #(.INFO_TIMEOUT_BITS(26)) savestate_ui
 (
@@ -2051,15 +2091,15 @@ savestate_ui #(.INFO_TIMEOUT_BITS(26)) savestate_ui
 );
 
 // DDR3: save states and the rotation framebuffer
-ddr_if ddr_host();
 ddr_if ddr_ss();
-ddr_if ddr_rot();
+ddr_if ddr_ssm();   // save_state_data's stream
+ddr_if ddr_hdr();   // slot size word cleared before a save
 
 save_state_data save_state_data
 (
     .clk(clk_sys),
     .reset(reset),
-    .ddr(ddr_ss),
+    .ddr(ddr_ssm),
     .read_start(ss_read),
     .write_start(ss_write),
     .index(ss_op_slot),
@@ -2067,38 +2107,64 @@ save_state_data save_state_data
     .ssbus(ssbus)
 );
 
-ddr_mux ddr_mux
+// the size-word write and the stream share the save-state side
+ddr_mux ddr_mux_ss
 (
     .clk(clk_sys),
-    .x(ddr_host),
-    .a(ddr_ss),
-    .b(ddr_rot)
+    .x(ddr_ss),
+    .a(ddr_hdr),
+    .b(ddr_ssm)
 );
+
+// one 64-bit write to the slot header: high half (size) 0, low half (change counter) kept
+assign ddr_hdr.acquire    = ss_hdr_acq;
+assign ddr_hdr.addr       = SS_DDR_BASE + {ss_op_slot, 22'd0};
+assign ddr_hdr.wdata      = 64'd0;
+assign ddr_hdr.read       = 1'b0;
+assign ddr_hdr.write      = ss_hdr_we;
+assign ddr_hdr.burstcnt   = 8'd1;
+assign ddr_hdr.byteenable = 8'hf0;
+assign ss_hdr_busy        = ddr_hdr.busy;
 
 wire        rot_busy, rot_we, rot_rd;
 wire  [7:0] rot_burstcnt, rot_be;
 wire [28:0] rot_addr;
 wire [63:0] rot_din;
 
-assign ddr_rot.acquire    = ~ddr_ss.acquire;
-assign ddr_rot.addr       = {rot_addr, 3'b000};
-assign ddr_rot.wdata      = rot_din;
-assign ddr_rot.read       = rot_rd;
-assign ddr_rot.write      = rot_we;
-assign ddr_rot.burstcnt   = rot_burstcnt;
-assign ddr_rot.byteenable = rot_be;
-assign rot_busy           = ddr_rot.busy;
+// a rotation write takes its cycle; busy reaches the save-state side only while it presents a command
+wire rot_cyc = rot_we;
 
 assign DDRAM_CLK      = clk_sys;
-assign DDRAM_ADDR     = ddr_host.addr[31:3];
-assign DDRAM_DIN      = ddr_host.wdata;
-assign DDRAM_RD       = ddr_host.read;
-assign DDRAM_WE       = ddr_host.write;
-assign DDRAM_BURSTCNT = ddr_host.burstcnt;
-assign DDRAM_BE       = ddr_host.byteenable;
-assign ddr_host.rdata       = DDRAM_DOUT;
-assign ddr_host.rdata_ready = DDRAM_DOUT_READY;
-assign ddr_host.busy        = DDRAM_BUSY;
+assign DDRAM_ADDR     = rot_cyc ? rot_addr     : ddr_ss.addr[31:3];
+assign DDRAM_DIN      = rot_cyc ? rot_din      : ddr_ss.wdata;
+assign DDRAM_RD       = ~rot_cyc & ddr_ss.read;
+assign DDRAM_WE       = rot_cyc | ddr_ss.write;
+assign DDRAM_BURSTCNT = rot_cyc ? rot_burstcnt : ddr_ss.burstcnt;
+assign DDRAM_BE       = rot_cyc ? rot_be       : ddr_ss.byteenable;
+assign ddr_ss.rdata       = DDRAM_DOUT;
+assign ddr_ss.rdata_ready = DDRAM_DOUT_READY;
+assign ddr_ss.busy        = (DDRAM_BUSY | rot_cyc) & (ddr_ss.read | ddr_ss.write);
+assign rot_busy           = DDRAM_BUSY;
+
+// load check: elements written per chunk (one per stream ack) and the end marker as the last word read
+reg [12:0] ss_cnt [SSIDX_COUNT];
+reg        ss_end;
+wire       ss_elem = ssbus.write && ssbus.ack && !ssbus.query && ssbus.select < SSIDX_COUNT;
+always @(posedge clk_sys) begin
+    if (ss_state == SST_LOAD_PARK) begin
+        for (int i = 0; i < SSIDX_COUNT; i++) ss_cnt[i] <= 0;
+        ss_end <= 0;
+    end else begin
+        if (ss_elem) ss_cnt[ssbus.select] <= ss_cnt[ssbus.select] + 1'd1;
+        if (ddr_ssm.rdata_ready) ss_end <= &ddr_ssm.rdata[63:56];
+    end
+end
+// elements per chunk as the adaptors above declare them (32-bit register 1; RAMs 2**AW; bit vectors words + 1)
+assign ss_load_ok = ss_end &&
+    ss_cnt[SSIDX_GLOBAL]  == 1    && ss_cnt[SSIDX_MAIN_RAM] == 4096 && ss_cnt[SSIDX_FG_RAM] == 2048 &&
+    ss_cnt[SSIDX_BG_RAM]  == 2048 && ss_cnt[SSIDX_RAM1]     == 2048 && ss_cnt[SSIDX_Z80_RAM] == 4096 &&
+    ss_cnt[SSIDX_Z80_REG] == (212 + 15) / 16 + 1 && ss_cnt[SSIDX_OPL] == 256 &&
+    ss_cnt[SSIDX_MISC]    == (MISC_BITS + 15) / 16 + 1;
     
 endmodule
 

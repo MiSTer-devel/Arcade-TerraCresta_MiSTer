@@ -9,7 +9,7 @@ set_global_assignment -name VHDL_FILE rtl/modules/T80/T80_Reg.vhd
 set_global_assignment -name VHDL_FILE rtl/modules/T80/T80_MCode.vhd
 set_global_assignment -name VHDL_FILE rtl/modules/T80/T80.vhd
 set_global_assignment -name VHDL_FILE rtl/modules/T80/T80pa.vhd
-# jtopl (YM3526): jotego/jtopl @ f96ff3ef16311e677b8bccc429b1b8f9a4e53276 (Jose Tejada, GPL-3.0)
+# jtopl (YM3526): jotego/jtopl @ f96ff3ef16311e677b8bccc429b1b8f9a4e53276 (Jose Tejada, GPL-3.0); modified: hdl/jtopl_reg_ch.v reset clears the channel feedback
 set_global_assignment -name QIP_FILE rtl/modules/jtopl/target/quartus/jt26.qip
 # pause: Jim Gregory's Pause_MiSTer (GPL-3.0) as modified in va7deo/TerraCresta
 set_global_assignment -name VERILOG_FILE rtl/pause.v

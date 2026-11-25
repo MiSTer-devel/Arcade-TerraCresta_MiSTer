@@ -58,7 +58,7 @@ Button combinations: none in normal play. Kid no Hore Hore Daisakusen **Debug Mo
 |------|---------|--------|--------|
 | [**fx68k**](https://github.com/ijor/fx68k) | Motorola 68000 CPU | Jorge Cwik | ijor/fx68k @ `0602ee4627b10f301298f2673d826cdd6baa9327` |
 | [**T80**](https://github.com/MiSTer-devel/NeoGeo_MiSTer/tree/90a8350c4e7fafb64067cf777b58a93bc7511fdc/rtl/cpu/T80) | Zilog Z80 CPU | Daniel Wallner, Sorgelig, MiSTer-devel | MiSTer-devel/NeoGeo_MiSTer @ `90a8350c4e7fafb64067cf777b58a93bc7511fdc` (`rtl/cpu/T80`) |
-| [**jtopl**](https://github.com/jotego/jtopl) | Yamaha YM3526 (OPL) | Jose Tejada | jotego/jtopl @ `f96ff3ef16311e677b8bccc429b1b8f9a4e53276` |
+| [**jtopl**](https://github.com/jotego/jtopl) | Yamaha YM3526 (OPL) | Jose Tejada | jotego/jtopl @ `f96ff3ef16311e677b8bccc429b1b8f9a4e53276` (`hdl/jtopl_reg_ch.v` modified: reset also clears the channel feedback, as the YM3526 does) |
 | [**Pause_MiSTer**](https://github.com/JimmyStones/Pause_MiSTer) | Pause / dim | Jim Gregory | as modified in va7deo/TerraCresta |
 | dual_port_ram / math | Block RAM wrapper | Josh Bassett (nullobject), MIT | via va7deo/TerraCresta |
 | [**Save states**](https://github.com/MiSTer-devel/Arcade-TaitoF2_MiSTer) | `ddram`, `memory_stream`, `savestates`, `savestate_ui` and the 68000 save/restore technique | Martin Donlon (wickerwaka); savestate_ui from FPGAzumSpass's MiSTer cores | MiSTer-devel/Arcade-TaitoF2_MiSTer @ `9438df98f1ea826c5398db43587992def0124603` |
